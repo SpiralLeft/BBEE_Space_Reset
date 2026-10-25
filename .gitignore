@@ -1,0 +1,11 @@
+# Only Mod source, documentation, compatibility hashes and synthetic tests.
+/*
+!/.gitignore
+!/README.md
+!/patch_single_space.py
+!/single-space-reset.js
+!/requirements.txt
+!/supported-game.json
+!/tests/
+/tests/*
+!/tests/test_installer.py
