@@ -9,3 +9,4 @@
 !/tests/
 /tests/*
 !/tests/test_installer.py
+!/tests/test_save_reload.cjs

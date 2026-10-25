@@ -27,7 +27,7 @@ BUILD = STATE / "build"
 BACKUP = STATE / "original"
 INSTALLED = STATE / "installed.json"
 RESOURCE = "data/js/window/pdassistant.ab"
-MARKER = b"menu patch v3 loaded"
+MARKER = b"menu patch v0.1.5 loaded"
 
 
 def digest(data):
@@ -113,7 +113,7 @@ def build():
     (BUILD / entry["m"]).write_bytes(new_merged)
     (BUILD / "merge.json").write_bytes(new_manifest)
     evidence = {
-        "version": "0.1.3", "resource": RESOURCE, "old_offset": offset, "new_offset": len(merged),
+        "version": "0.1.5", "resource": RESOURCE, "old_offset": offset, "new_offset": len(merged),
         "old_bundle_bytes": len(bundle), "new_bundle_bytes": len(output_bundle),
         "patched_js_sha256": digest(patched_js), "files": [
             {"name": entry["m"], "original_sha256": digest(merged), "patched_sha256": digest(new_merged)},

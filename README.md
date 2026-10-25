@@ -2,13 +2,14 @@
 
 在单人战斗的暂停菜单中增加“重置空间”按钮，一键自动执行原版“返回主菜单 → 继续当前存档”的流程，重新进入当前战斗空间。
 
-当前版本：**v0.1.3**。适配 Windows Steam 版 **1.1.2.147157**，Unity **2022.3.62f2**。
+当前版本：**v0.1.5**。适配 Windows Steam 版 **1.1.2.147157**，Unity **2022.3.62f2**。
 
 ## 功能
 
 - 复用多人模式的“重置空间”按钮、图标和遮罩转场资源。
 - 自动退出当前战斗、保存并重新读取当前存档，无需手动操作主菜单和存档选择。
 - 保留原版场景退出、登录初始化、战斗恢复和资源预加载流程。
+- 血量、MP、药瓶等角色状态由原版存档恢复，重置时不上传实时角色状态。
 - 跳过本次加载提示的最低展示等待，防止重复点击触发多个重置任务。
 - 多人模式继续使用游戏原有的重置逻辑。
 
@@ -88,7 +89,9 @@ python .interface-analysis\patch_single_space.py status
 
 按钮仅在符合条件时显示：单人 `BattleBreed`、当前为未完成的战斗房间、角色存活，且没有其他加载或重置任务。虚拟空间、已完成房间及其他玩法不在当前支持范围内。
 
-重置以游戏存档为准，不是任意时刻的战斗快照。角色、房间进度及可能产生的读档扣血等行为，沿用原版“返回主菜单后继续游戏”的规则。
+房间进度、角色构筑、血量、MP、药瓶及复活次数均由原版存档与角色初始化流程恢复。重置时，Mod 按原版返回主菜单的顺序保存已有数据模型，不上传当前战斗中的角色状态；随后通过原版读档入口恢复游戏记录的房间入场状态。
+
+Mod 不单独保存角色状态，不增加内存或文件中的血量检查点，也不在读档后修改血量。恢复结果以原版存档和入场规则为准，与手动返回主菜单后继续同一存档使用相同的角色恢复路径。
 
 ## 卸载与还原
 
@@ -117,10 +120,15 @@ python .interface-analysis\patch_single_space.py status
   → LoadData → OnLoginSuccess
   → RestoreBreedAndExplore → BattleBreedRun.Restore
   → 正常预加载、SceneFight 和战斗初始化
+  → 原版存档与角色初始化恢复角色状态
   → 检查输入与状态栏就绪
 ```
 
 v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入、状态栏和资源管理器。它不再使用旧版直接重建战斗、保留旧预加载器的捷径。
+
+原版的 `RequestEnterNextRoom` 在切换房间前上传血量比例等活动属性，`BreedDungeonEnterRoom` 更新模型并处理入场回血；正常换房间接着刷新现有角色的属性并执行入场触发器。返回主菜单的 `QuitAsync → ManualSave` 只保存已有模型，不会上传退出时的实时战斗血量。重新读档则从模型重新创建角色并初始化属性、增益和触发器。当前适配版本的单人 `BreedDungeonLoad` 未发现读档扣血逻辑。
+
+v0.1.5 完全交由上述原版路径恢复血量，移除了 v0.1.4 的额外血量检查点、房间开始钩子及读档后 `Attr.SetHP` 校正。
 
 补丁只修改 `data/js/window/pdassistant.ab` 对应的脚本资源：将重建的 Unity bundle 追加至 `BlazblueEntropyEffect_Data/StreamingAssets/ab/m_689.m`，并调整 `merge.json` 中该资源的偏移。原合并文件的内容保留为前缀，不修改 `GameAssembly.dll`，不依赖 BepInEx。
 
@@ -129,6 +137,8 @@ v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入�
 - 已通过 JavaScript 语法检查、TextAsset 二进制往返、原始资源前缀一致性、单条 manifest 偏移变更及安装后哈希检查。
 - 脚本回归测试执行游戏原版的重载、登录、恢复入口和正常预加载分支，覆盖同一存档保存/重读、资源交接、后续房间预加载、重复重置、防连点、多人分支及失败清理。
 - v0.1.3 的运行诊断已在两个不同战斗空间记录完成重置：输入锁为零，攻击/跳跃/闪避未被阻止，状态栏处于显示状态，预加载回调队列为空。
+- v0.1.5 的 8 项合成存档恢复测试通过，覆盖受伤后的状态恢复、重复重置、同地图下一房间、切换存档、原版血量比例与默认值、无效房间及多人分支；同时检查 Mod 不读取实时角色属性、不挂接房间开始通知、不调用血量校正接口。安装器的 5 项测试通过。
+- v0.1.5 已通过原版重载、登录和正常预加载入口的本地模拟回归，游戏内效果待实机验证。
 
 日志中的 `complete` 是程序状态检查结果。全部按键的实际响应、完整关卡资源以及长时间游玩的稳定性，仍需实机回归，不能仅凭日志判定全部通过。
 
@@ -136,9 +146,11 @@ v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入�
 
 ## 日志与问题定位
 
-日志位于 `.single-space-local/runtime.log`。v0.1.3 使用的内部诊断标记为 `"version":3`；该数字是诊断代号，不是 Mod 的发行版本号。
+日志位于 `.single-space-local/runtime.log`。当前诊断标记为 `"version":"0.1.5"`；旧版日志中的 `"version":3` 对应 v0.1.3。
 
 正常阶段依次为 `begin`、`quit-saved`、`auto-login-started`、`complete`。若 90 秒内未满足就绪条件，会记录 `restore-timeout` 和错误信息。
+
+当前版本不记录角色血量。旧日志中的 `health-checkpoint`、`health-restored`、`health-error` 属于 v0.1.4，升级后不再生成。
 
 遇到问题时，请在仓库 Issues 中提供 Mod 版本、游戏版本、所在空间、触发步骤、具体失效的按键或界面，以及对应的日志。若自动读档失败并停在主菜单，可使用原版“继续游戏”入口。
 
@@ -162,6 +174,7 @@ v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入�
 | `.interface-analysis/requirements.txt` | 构建所需的 Python 依赖 |
 | `.interface-analysis/supported-game.json` | 兼容的游戏版本、目标资源路径与校验哈希，不包含游戏脚本 |
 | `.interface-analysis/tests/test_installer.py` | 使用合成数据的安装、升级、回滚、还原与迁移测试 |
+| `.interface-analysis/tests/test_save_reload.cjs` | 使用合成宿主对象的原版存档恢复与状态隔离测试 |
 | `.single-space-local/build/` | 自动生成的构建产物与校验记录 |
 | `.single-space-local/installed.json` | 已安装版本与资源哈希 |
 | `.single-space-local/original/` | 首次安装时保留的原版资源 |
@@ -177,11 +190,16 @@ v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入�
 
 ```powershell
 python -B -m unittest discover -s .interface-analysis\tests -v
+node --test .interface-analysis\tests\test_save_reload.cjs
 ```
 
-在独立仓库根目录运行时，使用 `python -B -m unittest discover -s tests -v`。这些测试使用合成字节，不分发或读取游戏源文件。
+在独立仓库根目录运行时，使用 `python -B -m unittest discover -s tests -v` 和 `node --test tests/test_save_reload.cjs`。这些测试使用合成数据，不分发或读取游戏源文件。
 
 ## 版本记录
+
+**v0.1.5**：移除额外血量检查点与校正，角色状态完全交给原版存档恢复；重置不上传实时角色状态。
+
+**v0.1.4**：增加房间入场血量检查点，自动读档初始化完成后恢复血量；连续重置保留同一检查点，增加存档与房间隔离及血量恢复诊断。
 
 **v0.1.3**：改用完整“退出 → 保存 → 自动重读存档”流程，保留场景与资源初始化；增加输入、状态栏和加载状态检查。
 

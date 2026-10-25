@@ -17,12 +17,12 @@
     const U = require("Core/Util").U;
     const Cs = require("csharp");
     const Menu = exports.default;
-    if (Menu.prototype.__singleSpaceResetV3) return;
-    Menu.prototype.__singleSpaceResetV3 = true;
+    if (Menu.prototype.__singleSpaceResetV5) return;
+    Menu.prototype.__singleSpaceResetV5 = true;
     let busy = false;
 
     function trace(event, detail = {}) {
-        const line = JSON.stringify({ time: new Date().toISOString(), version: 3, event, ...detail });
+        const line = JSON.stringify({ time: new Date().toISOString(), version: "0.1.5", event, ...detail });
         console.info("SingleSpaceReset", line);
         try {
             const directory = Cs.UnityEngine.Application.dataPath + "/../.single-space-local";
@@ -237,5 +237,5 @@
         if (this.curMode === "BattleBreed") return Run.ResetCurrentSpace();
         return teamReset.apply(this, arguments);
     };
-    trace("menu patch v3 loaded");
+    trace("menu patch v0.1.5 loaded");
 })();
