@@ -2,6 +2,7 @@
 /*
 !/.gitignore
 !/README.md
+!/RESET_ANALYSIS.md
 !/patch_single_space.py
 !/single-space-reset.js
 !/requirements.txt
@@ -9,4 +10,4 @@
 !/tests/
 /tests/*
 !/tests/test_installer.py
-!/tests/test_save_reload.cjs
+!/tests/test_inplace_reset.cjs

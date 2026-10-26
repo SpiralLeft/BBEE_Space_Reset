@@ -1,19 +1,19 @@
 # 苍翼：混沌效应 · 单人空间重置 Mod
 
-在单人战斗的暂停菜单中增加“重置空间”按钮，一键自动执行原版“返回主菜单 → 继续当前存档”的流程，重新进入当前战斗空间。
+在单人战斗的暂停菜单中增加“重置空间”按钮，参考多人模式的原地重置方式重新创建当前房间，从已有模型重新初始化角色。
 
-当前版本：**v0.1.5**。适配 Windows Steam 版 **1.1.2.147157**，Unity **2022.3.62f2**。
+当前版本：**v0.1.6（原地重置，待实机验证）**。适配 Windows Steam 版 **1.1.2.147157**，Unity **2022.3.62f2**。
 
 ## 功能
 
 - 复用多人模式的“重置空间”按钮、图标和遮罩转场资源。
-- 自动退出当前战斗、保存并重新读取当前存档，无需手动操作主菜单和存档选择。
-- 保留原版场景退出、登录初始化、战斗恢复和资源预加载流程。
-- 血量、MP、药瓶等角色状态由原版存档恢复，重置时不上传实时角色状态。
-- 跳过本次加载提示的最低展示等待，防止重复点击触发多个重置任务。
-- 多人模式继续使用游戏原有的重置逻辑。
+- 在现有战斗内执行 `EnterStage`，保留 Battle、BattleUI、输入组与预加载器。
+- 通过原版 `breedSelfPlayerLoad` 从已有模型创建角色，初始化属性、技能、增益和触发器。
+- 重置只读取本地模型，不上传实时血量、MP、药瓶和复活消耗，不主动保存存档。
+- 不进入登录场景；遮罩覆盖等待为 400ms，之后仍需等待原版房间初始化及入场。
+- 防止重复点击触发多个重置任务，多人模式继续使用原有重置逻辑。
 
-**当前通过菜单按钮触发，尚未添加独立快捷键。** 本版仍会加载必要的场景和资源，不能实现零加载；主要减少中间操作和提示等待。
+**当前通过菜单按钮触发，尚未添加独立快捷键。** 尚未测得本版实机耗时；脚本和模拟验证不能替代游戏内回归。
 
 ## 安装
 
@@ -85,13 +85,13 @@ python .interface-analysis\patch_single_space.py status
 
 1. 进入单人模式的战斗空间。
 2. 打开游戏暂停菜单，选择“重置空间”。
-3. 等待转场与自动读档完成，重新进入当前空间。
+3. 等待遮罩转场与原版入场完成，重新进入当前空间。
 
 按钮仅在符合条件时显示：单人 `BattleBreed`、当前为未完成的战斗房间、角色存活，且没有其他加载或重置任务。虚拟空间、已完成房间及其他玩法不在当前支持范围内。
 
-房间进度、角色构筑、血量、MP、药瓶及复活次数均由原版存档与角色初始化流程恢复。重置时，Mod 按原版返回主菜单的顺序保存已有数据模型，不上传当前战斗中的角色状态；随后通过原版读档入口恢复游戏记录的房间入场状态。
+房间进度、角色构筑和活动属性来自当前存档的本地数据模型。重置只读取模型副本，移除当前战斗角色及其召唤物、子弹和未结算掉落，再交由原版角色创建流程恢复已有属性。
 
-Mod 不单独保存角色状态，不增加内存或文件中的血量检查点，也不在读档后修改血量。恢复结果以原版存档和入场规则为准，与手动返回主菜单后继续同一存档使用相同的角色恢复路径。
+重置不调用实时角色属性上传、换房间、读档或手动保存接口，也不在创建后校正血量。已有模型中记录的血量比例、MP、药瓶和复活次数决定初始化结果；它不会将退出重置前的受伤或消耗状态提交回模型。游戏其他正常流程的自动保存保持原样。
 
 ## 卸载与还原
 
@@ -112,47 +112,40 @@ python .interface-analysis\patch_single_space.py status
 
 ```text
 暂停菜单：重置空间
-  → 校验当前存档房间
-  → 关闭暂停菜单
-  → QuitAsync → ManualSave → ResetDataBinding
-  → ForceReloadGame
-  → SceneLogin → 自动 Login.StartGame
-  → LoadData → OnLoginSuccess
-  → RestoreBreedAndExplore → BattleBreedRun.Restore
-  → 正常预加载、SceneFight 和战斗初始化
-  → 原版存档与角色初始化恢复角色状态
-  → 检查输入与状态栏就绪
+  → GET 当前本地副本，校验存档/角色/阶段/房间
+  → 等待正在执行的预加载完成
+  → 关闭暂停菜单、遮罩覆盖、锁定重置期间输入
+  → 退出旧战斗过程、清理旧角色/召唤物/子弹/掉落
+  → EnterStage：在同一 Battle 内重建房间
+  → breedSelfPlayerLoad：从模型初始化新角色
+  → breedStagePreInit → commonStageInit → breedStageInit
+  → 重新绑定角色输入与状态栏
+  → 释放本次输入锁、执行原版入场
+  → 检查战斗、输入与状态栏就绪
 ```
 
-v0.1.3 完整复用原版的退出和读档生命周期，由游戏恢复输入、状态栏和资源管理器。它不再使用旧版直接重建战斗、保留旧预加载器的捷径。
+v0.1.6 移除 `QuitAsync → ManualSave → ResetDataBinding → ForceReloadGame` 路径。它也不使用旧实验版的 `ExistingOldPreloader → CreateBattleEx` 捷径，整个重置保持同一个 Battle、BattleUI 和预加载器，避免旧 UI 延迟回收注销输入组及资源管理器交接问题。
 
-原版的 `RequestEnterNextRoom` 在切换房间前上传血量比例等活动属性，`BreedDungeonEnterRoom` 更新模型并处理入场回血；正常换房间接着刷新现有角色的属性并执行入场触发器。返回主菜单的 `QuitAsync → ManualSave` 只保存已有模型，不会上传退出时的实时战斗血量。重新读档则从模型重新创建角色并初始化属性、增益和触发器。当前适配版本的单人 `BreedDungeonLoad` 未发现读档扣血逻辑。
-
-v0.1.5 完全交由上述原版路径恢复血量，移除了 v0.1.4 的额外血量检查点、房间开始钩子及读档后 `Attr.SetHP` 校正。
-
-补丁只修改 `data/js/window/pdassistant.ab` 对应的脚本资源：将重建的 Unity bundle 追加至 `BlazblueEntropyEffect_Data/StreamingAssets/ab/m_689.m`，并调整 `merge.json` 中该资源的偏移。原合并文件的内容保留为前缀，不修改 `GameAssembly.dll`，不依赖 BepInEx。
+多人模式的核心链路、角色同步与单人模型隔离边界见 [重置功能分析](RESET_ANALYSIS.md)。
 
 ## 验证情况
 
-- 已通过 JavaScript 语法检查、TextAsset 二进制往返、原始资源前缀一致性、单条 manifest 偏移变更及安装后哈希检查。
-- 脚本回归测试执行游戏原版的重载、登录、恢复入口和正常预加载分支，覆盖同一存档保存/重读、资源交接、后续房间预加载、重复重置、防连点、多人分支及失败清理。
-- v0.1.3 的运行诊断已在两个不同战斗空间记录完成重置：输入锁为零，攻击/跳跃/闪避未被阻止，状态栏处于显示状态，预加载回调队列为空。
-- v0.1.5 的 8 项合成存档恢复测试通过，覆盖受伤后的状态恢复、重复重置、同地图下一房间、切换存档、原版血量比例与默认值、无效房间及多人分支；同时检查 Mod 不读取实时角色属性、不挂接房间开始通知、不调用血量校正接口。安装器的 5 项测试通过。
-- v0.1.5 已通过原版重载、登录和正常预加载入口的本地模拟回归，游戏内效果待实机验证。
+- 11 项合成回归测试覆盖连续重置、血量/MP/药瓶/复活消耗隔离、同地图下一房间、切换存档、血量默认值、隐藏 HUD、多人成员入口、无效模型、预加载等待、防连点、准备阶段竞态、转场中断、原生失败和入场超时。
+- 本机原版脚本交叉检查执行 `breedSelfPlayerLoad`、`enterWithAutoCheckBattleState` 和 `BattleProcess_EnterStage`，连续重置三次；原版 `BattlePreloader` 的阶段预加载/收尾与后续房间预加载验证通过。其 Unity 原生对象由模拟宿主提供，未随仓库分发提取脚本。
+- 安装器的 5 项测试、JavaScript 语法检查、TextAsset 二进制往返、原始资源前缀一致性、单条 manifest 偏移变更和安装哈希检查均已通过。
+- **v0.1.6 尚未完成实机回归。** 特殊 Boss 入场、所有角色的召唤物/持续效果、攻击/跳跃/闪避、后续关卡资源和长时间游玩仍需实机检查。没有实机性能数字。
 
-日志中的 `complete` 是程序状态检查结果。全部按键的实际响应、完整关卡资源以及长时间游玩的稳定性，仍需实机回归，不能仅凭日志判定全部通过。
-
-脚本测试会模拟 Unity、本地 API 及部分运行对象，不等同于实机测试。
+日志中的 `complete` 表示程序就绪检查通过，不代表所有按键和资源均经过人工验证。旧版 v0.1.3/v0.1.5 的实机日志对应完整重载，不能作为本版原地重置的运行证据。
 
 ## 日志与问题定位
 
-日志位于 `.single-space-local/runtime.log`。当前诊断标记为 `"version":"0.1.5"`；旧版日志中的 `"version":3` 对应 v0.1.3。
+日志位于 `.single-space-local/runtime.log`。当前诊断标记为 `"version":"0.1.6"`；旧版日志中的 `"version":3` 对应 v0.1.3。
 
-正常阶段依次为 `begin`、`quit-saved`、`auto-login-started`、`complete`。若 90 秒内未满足就绪条件，会记录 `restore-timeout` 和错误信息。
+正常阶段依次为 `begin`、`room-rebuilt`、`complete`。`complete.elapsedMs` 记录本次总耗时；若 30 秒内未满足入场就绪条件，会记录 `entry-timeout` 和错误信息。
 
 当前版本不记录角色血量。旧日志中的 `health-checkpoint`、`health-restored`、`health-error` 属于 v0.1.4，升级后不再生成。
 
-遇到问题时，请在仓库 Issues 中提供 Mod 版本、游戏版本、所在空间、触发步骤、具体失效的按键或界面，以及对应的日志。若自动读档失败并停在主菜单，可使用原版“继续游戏”入口。
+遇到问题时，请在仓库 Issues 中提供 Mod 版本、游戏版本、所在空间、触发步骤、具体失效的按键或界面，以及对应的日志。若重置失败且战斗无法继续，请返回主菜单后使用原版“继续游戏”入口。
 
 常见安装问题：
 
@@ -169,12 +162,13 @@ v0.1.5 完全交由上述原版路径恢复血量，移除了 v0.1.4 的额外�
 
 | 路径（相对于游戏根目录） | 用途 |
 | --- | --- |
+| `.interface-analysis/RESET_ANALYSIS.md` | 多人重置调用链、单人状态隔离与原生证据 |
 | `.interface-analysis/single-space-reset.js` | Mod 注入源码 |
 | `.interface-analysis/patch_single_space.py` | 构建、安装、状态查询和还原工具 |
 | `.interface-analysis/requirements.txt` | 构建所需的 Python 依赖 |
 | `.interface-analysis/supported-game.json` | 兼容的游戏版本、目标资源路径与校验哈希，不包含游戏脚本 |
 | `.interface-analysis/tests/test_installer.py` | 使用合成数据的安装、升级、回滚、还原与迁移测试 |
-| `.interface-analysis/tests/test_save_reload.cjs` | 使用合成宿主对象的原版存档恢复与状态隔离测试 |
+| `.interface-analysis/tests/test_inplace_reset.cjs` | 使用合成宿主对象的原地重置、状态隔离与异常清理测试 |
 | `.single-space-local/build/` | 自动生成的构建产物与校验记录 |
 | `.single-space-local/installed.json` | 已安装版本与资源哈希 |
 | `.single-space-local/original/` | 首次安装时保留的原版资源 |
@@ -190,12 +184,14 @@ v0.1.5 完全交由上述原版路径恢复血量，移除了 v0.1.4 的额外�
 
 ```powershell
 python -B -m unittest discover -s .interface-analysis\tests -v
-node --test .interface-analysis\tests\test_save_reload.cjs
+node --test .interface-analysis\tests\test_inplace_reset.cjs
 ```
 
-在独立仓库根目录运行时，使用 `python -B -m unittest discover -s tests -v` 和 `node --test tests/test_save_reload.cjs`。这些测试使用合成数据，不分发或读取游戏源文件。
+在独立仓库根目录运行时，使用 `python -B -m unittest discover -s tests -v` 和 `node --test tests/test_inplace_reset.cjs`。这些测试使用合成数据，不分发或读取游戏源文件。
 
 ## 版本记录
+
+**v0.1.6**：参考多人模式改为同一 Battle 内 `EnterStage` 原地重置，保留 UI/输入组和预加载器；只读已有模型并通过原版流程创建角色，移除完整重载及保存步骤。待实机验证。
 
 **v0.1.5**：移除额外血量检查点与校正，角色状态完全交给原版存档恢复；重置不上传实时角色状态。
 
