@@ -18,7 +18,7 @@ function host(options = {}) {
     const model = {
         baseInfo: { id: 12, seed: 456, currentPhase: 1, dead: false,
             phases: [{ phaseIndex: 1, currentStageIndex: 1, finished: false,
-                rooms: [{ stageIdx: 'synthetic/room1', roomType: 1, finished: false }] }] },
+                theme: 7, rooms: [{ stageIdx: 'synthetic/room1', roomType: options.roomType ?? 1, finished: false }] }] },
         actorInfo: { fesActor: { id: 34, activeAttrs: [{ type: 1, value: 0.6 },
             { type: 2, value: 40 }, { type: 3, value: 1 }, { type: 4, value: 0 }] } },
         activeInfo: { blessesChecked: [8], combo: 4 }
@@ -52,9 +52,38 @@ function host(options = {}) {
         }
         return { Attr: attr, Input: { IsInputCmdBlock: () => false }, retired: false };
     }
+    const RoomTypes = { Fight: 1, Elite: 2, SuperElite: 3, Boss: 4, FinalBoss: 5 };
+    const candidates = options.candidates ?? ['synthetic/room1', 'synthetic/room2'];
+    const conf = { roomType: phase.rooms[0].roomType, stageIndex: 1, stageList: candidates };
+    const localModel = { IsMulti: !!options.modelOnline,
+        get Id() { return model.baseInfo.id; },
+        get currentPhaseIndex() { return model.baseInfo.currentPhase; },
+        get currentPhaseInfo() { return model.baseInfo.phases.at(-1); },
+        get currentRoom() { return this.currentPhaseInfo.rooms[this.currentPhaseInfo.currentStageIndex - 1]; },
+        get currentRoomConf() { return conf; } };
+    class Model {
+        static Instance = localModel;
+        randomStageIdx(selected) {
+            events.push('roll-map');
+            assert.equal(selected, conf);
+            assert.equal(this.baseInfo.seed, 0);
+            assert.equal(model.baseInfo.seed, 456, 'Do not overwrite saved seed');
+            assert.equal(this.currentPhaseInfo.theme, 7);
+            return options.invalidMap ? 'invalid' : candidates.find(s => s !== this.currentPhaseInfo.rooms.at(-1).stageIdx);
+        }
+    }
     const resourceOwner = { released: false };
     const preloader = { resourceOwner, stagePreloadPromise: options.preload ?? null,
-        Release() { resourceOwner.released = true; assert.fail('Released retained resources'); } };
+        Release() { resourceOwner.released = true; assert.fail('Released retained resources'); },
+        StartPreloadStage(stage) {
+            events.push('preload:' + stage);
+            this.stagePreloadPromise = options.mapPreloadFailure ? Promise.reject(Error('preload failed')) :
+                options.mapPreload ?? Promise.resolve();
+            return this.stagePreloadPromise;
+        },
+        async EndPreloadStage() {
+            await this.stagePreloadPromise; this.stagePreloadPromise = null; events.push('preload-end');
+        } };
     let boundPlayer;
     const hud = { CsObj: { gameObject: { activeInHierarchy: true } },
         R: { SelfStatus: { gameObject: { activeInHierarchy: true } }, HiddenConent: { alpha: options.hud === false ? 0 : 1 } },
@@ -82,6 +111,12 @@ function host(options = {}) {
             assert.equal(manager.ActorActionFlag & 2, 2, 'Reset lock must cover mutation');
             events.push('enter-stage');
             if (options.failEnter) throw Error('synthetic stage failure');
+            assert.equal(context.Stage, run.currentRoom.stageIdx);
+            if (context.Stage !== this.BattleContextBase.Stage) {
+                assert.ok(events.includes('preload:' + context.Stage));
+                assert.ok(events.includes('preload-end'));
+                assert.equal(localModel.currentRoom.stageIdx, context.Stage);
+            }
             this.BattleContextBase.Stage = context.Stage;
             // Model native stage logic reset without replacing any resource owner.
             this.BattleState = 0;
@@ -149,19 +184,23 @@ function host(options = {}) {
         'GamePlay/Battle/BattleRunBase': { BattleRunBase: RunBase },
         'GamePlay/Battle/BattleJs': { default: Battle },
         'GamePlay/Battle/BattlePreloader': { default: Preloader },
-        'GamePlay/BattleBreedRun/BattleBreedRunDefine': { BattleBreedRunDefine: { IsFightRoomType: t => t === 1 } },
+        'GamePlay/BattleBreedRun/BattleBreedRunDefine': { BattleBreedRunDefine: { IsFightRoomType: t => Object.values(RoomTypes).includes(t) } },
         'GamePlay/BattleBreedRun/BattleBreedRunBase': { BattleBreedStageInitType: { Normal: 0 } },
         'Widget/WidgetActorBlessGraph': { default: BlessGraph },
         'Server/Struct/ClientRequestStruct': { ClientApiBreedDungeon: { ApiBreedDungeon: 'get-dungeon' } },
         'Manager/TsGameGlobal': { default: Global }, 'Archive/ArchiveEnv': { default: Archive }, DataBinding: Data,
         'Core/UIUtil': { default: UI }, 'Core/WindowUtil': { default: { QueueMessages: m => messages.push(m) } },
+        'Widget/MiscSettingsWidget': { default: { IsSingleSpaceRerollEnabled: () => !!options.reroll } },
+        'Gen/pbdef': { EBreedDungeonRoomType: RoomTypes },
+        'Server/Model/BreedDungeon': { ModelBreedDungeon: Model },
+        'Gen/Xlsx': { Xlsx: { SceneStageBase: { Get: stage => candidates.includes(stage) ? { Idx: stage } : null } } },
         'Window/Loading': { default: class {} }, 'Core/Util': { U }, csharp: Cs
     };
     vm.runInNewContext(source, { require: name => {
         assert.ok(name in modules, 'Unexpected module: ' + name); return modules[name];
     }, exports: { default: Menu }, console: { info() {} }, Date });
     return { model, run, Battle, Run, RunBase, Archive, js, battle, preloader, hud, manager, Preloader,
-        Global, BlessGraph, events, logs, messages,
+        Global, BlessGraph, localModel, events, logs, messages,
         bound: () => boundPlayer, procs: () => procs, setOnline: v => { online = v; },
         hp: () => battle.PlayerSelf.Attr.HP, damage: hp => { battle.PlayerSelf.Attr.HP = hp; },
         populate: addRuntimeObjects, menu: () => new Menu(), reset: () => Run.ResetCurrentSpace() };
@@ -299,4 +338,87 @@ test('native failure and original entry timeout clear reset lock without automat
             assert.equal(h.manager.UIActionFlag & 4, 4, 'Never clear original entry lock');
         }
     }
+});
+
+
+test('enabled normal-room reset rerolls and preloads before mutation, changing only the room map', async () => {
+    const h = host({ reroll: true, forbidLiveRead: true });
+    const before = JSON.parse(JSON.stringify(h.model));
+    assert.equal(await h.reset(), true);
+    assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/room2');
+    assert.equal(h.run.currentRoom.stageIdx, 'synthetic/room2');
+    const expected = JSON.parse(JSON.stringify(before));
+    expected.baseInfo.phases[0].rooms[0].stageIdx = 'synthetic/room2';
+    assert.deepEqual(h.model, expected);
+    assert.ok(h.events.indexOf('preload-end') < h.events.indexOf('remove-player'));
+    assert.ok(h.logs.some(e => e.event === 'room-rerolled'));
+    assert.equal(await h.reset(), true, 'Repeated reset uses the newly selected map in the model');
+    assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/room1');
+    assert.deepEqual(h.model.actorInfo, before.actorInfo);
+    assert.equal(h.js.UIMain, h.hud); assert.equal(h.js.Preloader, h.preloader);
+});
+
+test('setting off and both boss types keep their original map and do not invoke RNG/preload', async () => {
+    for (const options of [{}, { reroll: false }, { reroll: true, roomType: 4 }, { reroll: true, roomType: 5 }]) {
+        const h = host(options), before = JSON.stringify(h.model);
+        assert.equal(await h.reset(), true);
+        assert.equal(h.events.includes('roll-map'), false);
+        assert.equal(h.events.some(e => e.startsWith('preload:')), false);
+        assert.equal(JSON.stringify(h.model), before);
+    }
+});
+
+test('eligible non-boss battle categories use the same gated selector', async () => {
+    for (const roomType of [1, 2, 3]) {
+        const h = host({ reroll: true, roomType }); assert.equal(await h.reset(), true);
+        assert.equal(h.model.baseInfo.phases[0].rooms[0].roomType, roomType);
+        assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/room2');
+    }
+});
+
+test('online mode remains excluded even with reroll enabled', async () => {
+    const h = host({ online: true, reroll: true });
+    assert.equal(await h.reset(), false);
+    assert.deepEqual(h.events, []);
+});
+
+test('single candidate or empty candidates retain the original room', async () => {
+    for (const candidates of [[], ['synthetic/room1']]) {
+        const h = host({ reroll: true, candidates });
+        assert.equal(await h.reset(), true);
+        assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/room1');
+        assert.equal(h.events.some(e => e.startsWith('preload:')), false);
+    }
+});
+
+test('invalid selection/preload failure cannot change map or retire the current player', async () => {
+    for (const extra of [{ invalidMap: true }, { mapPreloadFailure: true }]) {
+        const options = { reroll: true, ...extra }, h = host(options);
+        const before = JSON.stringify(h.model), player = h.battle.PlayerSelf;
+        assert.equal(await h.reset(), false);
+        assert.equal(h.battle.PlayerSelf, player);
+        assert.equal(JSON.stringify(h.model), before);
+        assert.equal(h.manager.ActorActionFlag | h.manager.UIActionFlag, 0);
+        assert.equal(h.preloader.stagePreloadPromise, null);
+        options.reroll = false;
+        assert.equal(await h.reset(), true, 'Failed preparation must not poison later resets');
+    }
+});
+
+test('reroll native entry failure rolls back selected model map without changing actor data', async () => {
+    const h = host({ reroll: true, failEnter: true }), before = JSON.stringify(h.model);
+    assert.equal(await h.reset(), false);
+    assert.equal(JSON.stringify(h.model), before);
+    assert.equal(h.manager.ActorActionFlag | h.manager.UIActionFlag, 0);
+});
+
+test('room changes during reroll preload abort before committing or replacing player', async () => {
+    const pending = deferred(), options = { reroll: true, mapPreload: pending.promise };
+    const h = host(options), player = h.battle.PlayerSelf;
+    const task = h.reset();
+    for (let i = 0; i < 10 && !h.events.includes('preload:synthetic/room2'); i++) await Promise.resolve();
+    h.Archive.ActiveSlot = 2; pending.resolve();
+    assert.equal(await task, false); assert.equal(h.battle.PlayerSelf, player);
+    assert.equal(h.localModel.currentRoom.stageIdx, 'synthetic/room1');
+    assert.equal(h.manager.ActorActionFlag | h.manager.UIActionFlag, 0);
 });

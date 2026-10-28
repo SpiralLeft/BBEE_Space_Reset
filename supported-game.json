@@ -1,5 +1,23 @@
 {
-  "game_version": "1.1.2.147157",
+  "game_version": "1.1.2.147368",
+  "game_versions": ["1.1.2.147157", "1.1.2.147368"],
+  "update_baselines": [
+    {
+      "game_version": "1.1.2.147368",
+      "manifest_sha256": "2a1bc49af0b3ded5971ecda9ffb13f3fa4a27892b2077827eefbcca32ad5ebc3",
+      "files": {
+        "m_689.m": "a033d16381a9a75036a7d587db705691fab0b6641ee8d49df1ae5f2734eb4c9c",
+        "m_261.m": "395c1dfe87f6c09b189f9070430ae3bf08588a35cd3aab076a14b1e2c5ab41ec"
+      }
+    }
+  ],
   "resource": "data/js/window/pdassistant.ab",
-  "textasset_sha256": "437822c7b095444326eebfb88df0b0c4e1b9355e4bf682230dcdb7329c7322a1"
+  "textasset_sha256": "437822c7b095444326eebfb88df0b0c4e1b9355e4bf682230dcdb7329c7322a1",
+  "additional_resources": [
+    {
+      "resource": "data/js/widget/miscsettingswidget.ab",
+      "source": "reset-room-settings.js",
+      "textasset_sha256": "f03641ff5304bbdc4a0cc28d26e23bc76d967380851f3c60b2ae3953a37cb516"
+    }
+  ]
 }

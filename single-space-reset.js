@@ -18,12 +18,12 @@
     const U = require("Core/Util").U;
     const Cs = require("csharp");
     const Menu = exports.default;
-    if (Menu.prototype.__singleSpaceResetV6) return;
-    Menu.prototype.__singleSpaceResetV6 = true;
+    if (Menu.prototype.__singleSpaceResetV8) return;
+    Menu.prototype.__singleSpaceResetV8 = true;
     let busy = false;
 
     function trace(event, detail = {}) {
-        const line = JSON.stringify({ time: new Date().toISOString(), version: "0.1.6", event, ...detail });
+        const line = JSON.stringify({ time: new Date().toISOString(), version: "0.2.1", event, ...detail });
         console.info("SingleSpaceReset", line);
         try {
             const directory = Cs.UnityEngine.Application.dataPath + "/../.single-space-local";
@@ -130,6 +130,41 @@
         }
     }
 
+    function planRoomReroll(snapshot, run, stage) {
+        const settings = require("Widget/MiscSettingsWidget").default;
+        if (!settings.IsSingleSpaceRerollEnabled() || Cs.PvpDefine.IsOnlineMode() ||
+            Battle.Instance?.BattleClassName !== "BattleBreed") return null;
+        const types = require("Gen/pbdef").EBreedDungeonRoomType;
+        const phase = snapshot.baseInfo.phases[snapshot.baseInfo.phases.length - 1];
+        const room = phase.rooms[phase.currentStageIndex - 1];
+        if (![types.Fight, types.Elite, types.SuperElite].includes(room.roomType)) return null;
+        const Model = require("Server/Model/BreedDungeon").ModelBreedDungeon;
+        if (Model.IsForceSetMap) return null;
+        const model = Model.Instance;
+        const modelRoom = model.currentRoom;
+        if (model.IsMulti || model.Id !== snapshot.baseInfo.id ||
+            model.currentPhaseIndex !== run.currentPhase ||
+            model.currentPhaseInfo.currentStageIndex !== run.currentStageIndex ||
+            modelRoom?.stageIdx !== stage || modelRoom.finished || modelRoom.roomType !== room.roomType) {
+            throw new Error("The local room model changed before reroll");
+        }
+        const conf = model.currentRoomConf;
+        if (!conf?.stageList?.length || conf.roomType !== room.roomType) return null;
+        // Reuse original tier/theme filters and seen-map/tag exclusions. A fresh
+        // draw needs seed=0 in this temporary view, never in the saved dungeon.
+        // Boss history is unused by the eligible non-boss branch of this method.
+        const view = { baseInfo: { ...snapshot.baseInfo, seed: 0 },
+            currentPhaseInfo: phase, phases: snapshot.baseInfo.phases,
+            GetRandomedBoss: () => [] };
+        const nextStage = Model.prototype.randomStageIdx.call(view, conf);
+        if (!nextStage || nextStage === stage) return null;
+        const Xlsx = require("Gen/Xlsx").Xlsx;
+        if (!conf.stageList.includes(nextStage) || !Xlsx.SceneStageBase.Get(nextStage, 3)) {
+            throw new Error("The original map selector returned an invalid room");
+        }
+        return { model, modelRoom, room, oldStage: stage, nextStage, applied: false };
+    }
+
     Run.CanResetCurrentSpace = canReset;
     Run.ResetCurrentSpace = async function ResetCurrentSpace() {
         if (!canReset()) return false;
@@ -146,6 +181,8 @@
         const oldPlayer = battle.PlayerSelf;
         const started = Cs.UnityEngine.Time.realtimeSinceStartup;
         const inputLock = Cs.NOAH.Input.LockFlag.AsyncLoading;
+        let reroll;
+        let targetStage = stage;
         let mask;
         let locked = false;
         let changed = false;
@@ -179,7 +216,9 @@
             checkCurrent(snapshot);
             await preloader.stagePreloadPromise;
             checkCurrent(snapshot);
-            trace("begin", { stage, phase, roomIndex, path: "in-place" });
+            reroll = planRoomReroll(snapshot, run, stage);
+            targetStage = reroll?.nextStage ?? stage;
+            trace("begin", { stage, targetStage, phase, roomIndex, path: "in-place" });
             U.SetAllActionLock(true, inputLock);
             locked = true;
             UI.RecycleWindowByName("PDAssistant", true);
@@ -189,10 +228,43 @@
             mask = playTransition("Load");
             if (!await U.Delay(400, "SingleSpaceReset")) throw new Error("Reset transition was interrupted");
             checkCurrent(snapshot);
+            if (reroll) {
+                // Use the same retained batch and resource managers as normal
+                // room entry; complete loading before replacing any live object.
+                const preloadTask = preloader.StartPreloadStage(targetStage);
+                const stageTask = preloader.stagePreloadPromise;
+                try {
+                    await preloadTask;
+                    await preloader.EndPreloadStage();
+                } catch (error) {
+                    // Clear only our rejected native task so a later reset can
+                    // retry; preserve a task installed by another operation.
+                    if (stageTask && preloader.stagePreloadPromise === stageTask) {
+                        try { await stageTask; }
+                        catch (_) { preloader.stagePreloadPromise = null; }
+                    }
+                    throw error;
+                }
+                checkCurrent(snapshot);
+                if (reroll.model.Id !== snapshot.baseInfo.id ||
+                    reroll.model.currentPhaseIndex !== phase ||
+                    reroll.model.currentPhaseInfo.currentStageIndex !== roomIndex ||
+                    reroll.model.currentRoom.stageIdx !== stage || reroll.model.currentRoom.finished) {
+                    throw new Error("The local room changed during map preloading");
+                }
+            }
 
             // Preserve Battle, UI/InputGroup and the resource managers/retainer.
             // Unlike multiplayer (which keeps its players), discard the old
             // player and all its summons/bullets before original model loading.
+            if (reroll) {
+                // Commit only the selected map. Never upload live actor data or
+                // re-run room-entry rewards, recovery, devices or random drops.
+                reroll.modelRoom.stageIdx = targetStage;
+                reroll.room.stageIdx = targetStage;
+                reroll.applied = true;
+                trace("room-rerolled", { from: stage, to: targetStage });
+            }
             changed = true;
             js.ExitAllProcs();
             js.ExitAll();
@@ -219,9 +291,11 @@
             js.m_DungeonActiveInfo = undefined;
             js.m_TimeTipType = 0;
             js.refreshHeatStatus();
-            // Same map: EnterStage owns native scene cleanup, BLL/spawn reset
-            // and time/statistics reset. No scene load or preloader handoff.
-            battle.EnterStage(battle.BattleContextBase.Clone(), null, false);
+            // EnterStage owns native cleanup and BLL/time/statistics reset.
+            // Both maps are owned by the retained preloader; no scene handoff.
+            const context = battle.BattleContextBase.Clone();
+            context.Stage = targetStage;
+            battle.EnterStage(context, null, false);
             js.breedSelfPlayerLoad();
             const player = battle.PlayerSelf;
             if (!player || player === oldPlayer) throw new Error("The original player initialization failed");
@@ -235,7 +309,7 @@
             hud.HiddenUI(Data.DB.Battle.BattleUIOpen.Value);
             js.BreedUI?.ShowExpPanel(true);
             if (js.Preloader !== preloader || js.UIMain !== hud) throw new Error("Room reset replaced a retained owner");
-            trace("room-rebuilt", { stage, retainedBattle: true, retainedUI: true, retainedPreloader: true });
+            trace("room-rebuilt", { stage: targetStage, retainedBattle: true, retainedUI: true, retainedPreloader: true });
             battle.TimeScale = oldTimeScale;
             frozen = false;
             stopTransition(mask);
@@ -246,11 +320,20 @@
             locked = false;
             // Original entry owns its ScriptRequire/input blocks and boss entry.
             await js.enterWithAutoCheckBattleState();
-            const ready = await waitForEntry(js, run, stage, slot, player, phase, roomIndex);
+            const ready = await waitForEntry(js, run, targetStage, slot, player, phase, roomIndex);
             trace("complete", { ...ready, elapsedMs: Math.round(
                 (Cs.UnityEngine.Time.realtimeSinceStartup - started) * 1000) });
             return true;
         } catch (error) {
+            if (reroll?.applied && Battle.Instance === js && js.Battle === battle &&
+                Archive.ActiveSlot === slot && battle.BattleContextBase.Stage !== targetStage &&
+                reroll.model.Id === run.dungeonId &&
+                reroll.model.currentPhaseIndex === phase &&
+                reroll.model.currentPhaseInfo.currentStageIndex === roomIndex &&
+                reroll.model.currentRoom.stageIdx === targetStage) {
+                reroll.modelRoom.stageIdx = reroll.oldStage;
+                reroll.room.stageIdx = reroll.oldStage;
+            }
             trace("error", { message: error?.stack || String(error), changed });
             Windows.QueueMessages(changed ? "重置空间失败，请返回主菜单后继续游戏。" : "未能重置空间，请稍后重试。");
             return false;
@@ -289,5 +372,5 @@
         if (this.curMode === "BattleBreed") return Run.ResetCurrentSpace();
         return teamReset.apply(this, arguments);
     };
-    trace("menu patch v0.1.6 loaded");
+    trace("menu patch v0.2.1 loaded");
 })();

@@ -5,9 +5,12 @@
 !/RESET_ANALYSIS.md
 !/patch_single_space.py
 !/single-space-reset.js
+!/reset-room-settings.js
 !/requirements.txt
 !/supported-game.json
 !/tests/
 /tests/*
 !/tests/test_installer.py
 !/tests/test_inplace_reset.cjs
+
+!/tests/test_settings.cjs
