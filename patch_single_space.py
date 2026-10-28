@@ -27,7 +27,7 @@ BUILD = STATE / "build"
 BACKUP = STATE / "original"
 INSTALLED = STATE / "installed.json"
 RESOURCE = "data/js/window/pdassistant.ab"
-MARKER = b"menu patch v0.2.1 loaded"
+MARKER = b"menu patch v0.2.2 loaded"
 
 
 def digest(data):
@@ -112,7 +112,7 @@ def rebase():
         if any(e["s"] < 0 or e["s"] >= len(original) for e in entries if e["m"] == name):
             raise RuntimeError("Updated manifest references data outside the clean baseline: " + name)
         originals[name], actuals[name] = original, actual
-    evidence = dict(version="0.2.1", game_version=baseline["game_version"],
+    evidence = dict(version="0.2.2", game_version=baseline["game_version"],
                     baseline_pending_install=True, resources=[], files=[
                         dict(name=name, original_sha256=digest(data), patched_sha256=actuals[name])
                         for name, data in originals.items()])
@@ -231,7 +231,7 @@ def build():
     files = [dict(name=name, original_sha256=digest(originals[name]), patched_sha256=digest(data))
              for name, data in outputs.items()]
     files.append(dict(name="merge.json", original_sha256=digest(manifest_bytes), patched_sha256=digest(new_manifest)))
-    evidence = dict(version="0.2.1", resources=resources, files=files,
+    evidence = dict(version="0.2.2", resources=resources, files=files,
                     verification="JS syntax + TextAsset binary roundtrip + unchanged original merged bytes + exact target manifest offsets")
     (BUILD / "build.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     print(json.dumps(evidence, indent=2))

@@ -53,6 +53,8 @@ PDAssistant.OnTeamBreedResetClick
 
 ## 单人的实施方式
 
+Boss 战中的运行场景可能与存档入场地图不同。实机日志记录同一阶段、房间索引下，存档地图为 `Stage03/113_s_bossgss`，Boss 战中的 `BattleContextBase.Stage` 为 `Stage03/s_boss_gss`。重置分别记录两个值：存档模型必须匹配原入场地图，准备期间运行场景也必须保持稳定；只有 Boss/FinalBoss 允许二者不同。目标始终取存档入场地图，若与运行场景不同，复用现有 `StartPreloadStage → EndPreloadStage` 后再重建。不修改存档地图或角色状态。该 Boss 中途重置流程已通过实机测试。
+
 1. 校验存档槽、地下城 ID/种子、角色 ID、阶段、房间索引、地图、未完成且存活；预加载结束后和遮罩覆盖后再次校验。
 2. 立即关闭暂停菜单，保留原来的 BattleUI/InputGroup，锁定本次 `AsyncLoading` 输入位并冻结战斗。
 3. 退出旧 BattleProcs 和延迟任务，清理敌人、旧玩家召唤物/子弹/掉落，原生 `RemovePlayerSelf` 移除角色。
@@ -88,6 +90,6 @@ IL2CPP 方法表及反汇编定位：
 
 本机详细反汇编位于 `.single-space-local/inplace-native-evidence.txt`。
 
-源码仓库的 23 项合成脚本测试检查角色状态隔离、资源/UI 身份、重复重置、设置持久化、随机地图与异常边界，另有 8 项安装器测试。本机 `.single-space-local/test_inplace_original.cjs` 执行原版角色加载、普通入场过程和预加载器代码；`.single-space-local/test_reroll_original.cjs` 执行原版抽图和 PRNG、标签/已用地图筛选与连续八次随机重置。Unity 原生对象、属性系统和实际场景仍使用模拟宿主。
+源码仓库的 27 项合成脚本测试检查角色状态隔离、资源/UI 身份、重复重置、设置持久化、随机地图、Boss 场景切换、暂停恢复与异常边界，另有 8 项安装器测试。本机 `.single-space-local/test_inplace_original.cjs` 执行原版角色加载、普通入场过程和预加载器代码；`.single-space-local/test_reroll_original.cjs` 执行原版抽图和 PRNG、标签/已用地图筛选与连续八次随机重置。Unity 原生对象、属性系统和实际场景仍使用模拟宿主。
 
 仍需游戏内验证：实际性能；所有角色的召唤物/持续效果；攻击、跳跃、闪避和状态栏；特殊 Boss 开场；后续换房、死亡和正常保存/退出。现有模拟与静态证据不足以宣称这些已通过。

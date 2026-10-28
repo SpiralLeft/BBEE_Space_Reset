@@ -140,6 +140,7 @@ function host(options = {}) {
         async enterWithAutoCheckBattleState() {
             events.push('entry');
             assert.equal(manager.ActorActionFlag & 2, 0, 'Release only reset lock before original entry');
+            assert.equal(battle.TimeScale, 1, 'Original entry must resume after the pause menu closes');
             if (options.entryFailure) throw Error('synthetic entry failure');
             manager.UIActionFlag |= 4;
             if (options.timeout) return;
@@ -366,6 +367,63 @@ test('setting off and both boss types keep their original map and do not invoke 
         assert.equal(h.events.some(e => e.startsWith('preload:')), false);
         assert.equal(JSON.stringify(h.model), before);
     }
+});
+
+test('boss arena changes reset to the saved entry map and preserve saved character data', async () => {
+    for (const roomType of [4, 5]) {
+        const h = host({ reroll: true, roomType, forbidLiveRead: true });
+        const before = JSON.stringify(h.model);
+        const oldPlayer = h.battle.PlayerSelf;
+        h.battle.BattleContextBase.Stage = 'synthetic/boss-phase2';
+        assert.equal(await h.reset(), true);
+        assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/room1');
+        assert.equal(h.run.currentRoom.stageIdx, 'synthetic/room1');
+        assert.equal(JSON.stringify(h.model), before);
+        assert.equal(h.events.includes('roll-map'), false);
+        assert.ok(h.events.indexOf('preload:synthetic/room1') < h.events.indexOf('preload-end'));
+        assert.ok(h.events.indexOf('preload-end') < h.events.indexOf('remove-player'));
+        assert.equal(oldPlayer.retired, true);
+        assert.equal(h.preloader.resourceOwner.released, false);
+        assert.ok(h.logs.some(e => e.event === 'complete'));
+        assert.equal(await h.reset(), true, 'Reset also works after returning to the entry map');
+    }
+});
+
+test('a different runtime map in a non-boss room still aborts before modifying the room', async () => {
+    const h = host();
+    const player = h.battle.PlayerSelf;
+    h.battle.BattleContextBase.Stage = 'synthetic/another-room';
+    assert.equal(await h.reset(), false);
+    assert.equal(h.battle.PlayerSelf, player);
+    assert.equal(h.events.includes('enter-stage'), false);
+    assert.ok(h.logs.some(e => e.event === 'preparation-aborted' && e.changedChecks.includes('sameRoom')));
+});
+
+test('boss arena changes during preparation abort even if the saved room stays the same', async () => {
+    let h;
+    h = host({ roomType: 4, onDelay(ms) {
+        if (ms === 400) h.battle.BattleContextBase.Stage = 'synthetic/boss-phase3';
+    } });
+    const player = h.battle.PlayerSelf;
+    h.battle.BattleContextBase.Stage = 'synthetic/boss-phase2';
+    assert.equal(await h.reset(), false);
+    assert.equal(h.battle.PlayerSelf, player);
+    assert.equal(h.events.includes('enter-stage'), false);
+    assert.ok(h.logs.some(e => e.event === 'preparation-aborted' && e.changedChecks.includes('sameBattle')));
+});
+
+test('boss entry map preload failure keeps the current player and saved room intact', async () => {
+    const h = host({ roomType: 4, mapPreloadFailure: true });
+    const before = JSON.stringify(h.model), player = h.battle.PlayerSelf;
+    h.battle.BattleContextBase.Stage = 'synthetic/boss-phase2';
+    assert.equal(await h.reset(), false);
+    assert.equal(h.battle.PlayerSelf, player);
+    assert.equal(h.events.includes('enter-stage'), false);
+    assert.equal(h.battle.BattleContextBase.Stage, 'synthetic/boss-phase2');
+    assert.equal(JSON.stringify(h.model), before);
+    assert.equal(h.manager.ActorActionFlag | h.manager.UIActionFlag, 0);
+    assert.equal(h.battle.TimeScale, 1);
+    assert.equal(h.preloader.stagePreloadPromise, null);
 });
 
 test('eligible non-boss battle categories use the same gated selector', async () => {

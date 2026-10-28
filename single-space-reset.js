@@ -18,12 +18,12 @@
     const U = require("Core/Util").U;
     const Cs = require("csharp");
     const Menu = exports.default;
-    if (Menu.prototype.__singleSpaceResetV8) return;
-    Menu.prototype.__singleSpaceResetV8 = true;
+    if (Menu.prototype.__singleSpaceResetV9) return;
+    Menu.prototype.__singleSpaceResetV9 = true;
     let busy = false;
 
     function trace(event, detail = {}) {
-        const line = JSON.stringify({ time: new Date().toISOString(), version: "0.2.1", event, ...detail });
+        const line = JSON.stringify({ time: new Date().toISOString(), version: "0.2.2", event, ...detail });
         console.info("SingleSpaceReset", line);
         try {
             const directory = Cs.UnityEngine.Application.dataPath + "/../.single-space-local";
@@ -176,13 +176,16 @@
         const hud = js.UIMain;
         const slot = Archive.ActiveSlot;
         const stage = battle.BattleContextBase.Stage;
+        const roomStage = run.currentRoom.stageIdx;
+        const roomTypes = require("Gen/pbdef").EBreedDungeonRoomType;
+        const bossRoom = [roomTypes.Boss, roomTypes.FinalBoss].includes(run.currentRoom.roomType);
         const phase = run.currentPhase;
         const roomIndex = run.currentStageIndex;
         const oldPlayer = battle.PlayerSelf;
         const started = Cs.UnityEngine.Time.realtimeSinceStartup;
         const inputLock = Cs.NOAH.Input.LockFlag.AsyncLoading;
         let reroll;
-        let targetStage = stage;
+        let targetStage = roomStage;
         let mask;
         let locked = false;
         let changed = false;
@@ -190,22 +193,37 @@
         let frozen = false;
         let transitionOut = false;
         function checkCurrent(snapshot) {
-            if (Battle.Instance !== js || js.Battle !== battle || Run.SilentInstance !== run ||
-                RunBase.Instance !== run || Archive.ActiveSlot !== slot ||
-                run.currentPhase !== phase || run.currentStageIndex !== roomIndex ||
-                run.isVirtualStage || run.curPhaseInfo.finished || run.currentRoom.finished ||
-                run.currentRoom.stageIdx !== stage || run.dungeon.baseInfo.dead ||
-                Cs.UnityEngine.SceneManagement.SceneManager.GetActiveScene().name !== "SceneFight" ||
-                battle.PlayerSelf !== oldPlayer || oldPlayer.Attr.IsHPZero ||
-                battle.BattleState !== Cs.GamePlay.BattleState.Run ||
-                js.PauseCount > 1 || js.BossDieShowing || js.Preloader !== preloader ||
-                js.UIMain !== hud || Global.Instance.loadingPromise ||
-                Preloader.loadBattleExLock || Preloader.ExistingOldPreloader ||
-                Preloader.AdditinalLoadFuncs.length !== 0 ||
-                Cs.PvpDefine.IsOnlineMode()) {
-                throw new Error("The active combat room changed while preparing reset");
+            const checks = {
+                sameBattle: Battle.Instance === js && js.Battle === battle &&
+                    battle.BattleContextBase.Stage === stage,
+                sameRun: Run.SilentInstance === run && RunBase.Instance === run,
+                sameSave: Archive.ActiveSlot === slot,
+                sameRoom: run.currentPhase === phase && run.currentStageIndex === roomIndex &&
+                    !run.isVirtualStage && !run.curPhaseInfo.finished && !run.currentRoom.finished &&
+                    run.currentRoom.stageIdx === roomStage && !run.dungeon.baseInfo.dead &&
+                    (stage === roomStage || bossRoom),
+                fightScene: Cs.UnityEngine.SceneManagement.SceneManager.GetActiveScene().name === "SceneFight",
+                playerAlive: battle.PlayerSelf === oldPlayer && !oldPlayer.Attr.IsHPZero,
+                battleRunning: battle.BattleState === Cs.GamePlay.BattleState.Run,
+                pauseStable: js.PauseCount <= 1,
+                bossStable: !js.BossDieShowing,
+                ownersStable: js.Preloader === preloader && js.UIMain === hud,
+                noOtherLoading: !Global.Instance.loadingPromise && !Preloader.loadBattleExLock &&
+                    !Preloader.ExistingOldPreloader && Preloader.AdditinalLoadFuncs.length === 0,
+                singlePlayer: !Cs.PvpDefine.IsOnlineMode()
+            };
+            const changedChecks = Object.keys(checks).filter(key => !checks[key]);
+            if (changedChecks.length) {
+                trace("preparation-aborted", { stage, roomStage, phase, roomIndex, changedChecks,
+                    state: { scene: Cs.UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+                        runPhase: run.currentPhase, runRoomIndex: run.currentStageIndex,
+                        runStage: run.currentRoom?.stageIdx, savedSlot: Archive.ActiveSlot,
+                        playerDead: oldPlayer.Attr.IsHPZero, battleState: battle.BattleState,
+                        pauseCount: js.PauseCount, bossDieShowing: js.BossDieShowing,
+                        preloadCallbacks: Preloader.AdditinalLoadFuncs.length } });
+                throw new Error("The active combat room changed while preparing reset: " + changedChecks.join(", "));
             }
-            validateSnapshot(snapshot, run, stage);
+            validateSnapshot(snapshot, run, roomStage);
         }
         try {
             // GET returns the local dungeon model, not the damaged live player.
@@ -216,19 +234,23 @@
             checkCurrent(snapshot);
             await preloader.stagePreloadPromise;
             checkCurrent(snapshot);
-            reroll = planRoomReroll(snapshot, run, stage);
-            targetStage = reroll?.nextStage ?? stage;
-            trace("begin", { stage, targetStage, phase, roomIndex, path: "in-place" });
+            reroll = planRoomReroll(snapshot, run, roomStage);
+            // Boss encounters can switch their runtime arena without changing
+            // the saved room. Reset always starts from the saved entry map.
+            targetStage = reroll?.nextStage ?? roomStage;
+            trace("begin", { stage, roomStage, targetStage, phase, roomIndex, path: "in-place" });
             U.SetAllActionLock(true, inputLock);
             locked = true;
             UI.RecycleWindowByName("PDAssistant", true);
+            // Closing the menu releases its pause. Capture that resumed scale,
+            // as in v0.2.1, before freezing only the room rebuild.
             oldTimeScale = battle.TimeScale;
             battle.TimeScale = 0;
             frozen = true;
             mask = playTransition("Load");
             if (!await U.Delay(400, "SingleSpaceReset")) throw new Error("Reset transition was interrupted");
             checkCurrent(snapshot);
-            if (reroll) {
+            if (targetStage !== stage) {
                 // Use the same retained batch and resource managers as normal
                 // room entry; complete loading before replacing any live object.
                 const preloadTask = preloader.StartPreloadStage(targetStage);
@@ -246,10 +268,10 @@
                     throw error;
                 }
                 checkCurrent(snapshot);
-                if (reroll.model.Id !== snapshot.baseInfo.id ||
+                if (reroll && (reroll.model.Id !== snapshot.baseInfo.id ||
                     reroll.model.currentPhaseIndex !== phase ||
                     reroll.model.currentPhaseInfo.currentStageIndex !== roomIndex ||
-                    reroll.model.currentRoom.stageIdx !== stage || reroll.model.currentRoom.finished) {
+                    reroll.model.currentRoom.stageIdx !== roomStage || reroll.model.currentRoom.finished)) {
                     throw new Error("The local room changed during map preloading");
                 }
             }
@@ -372,5 +394,5 @@
         if (this.curMode === "BattleBreed") return Run.ResetCurrentSpace();
         return teamReset.apply(this, arguments);
     };
-    trace("menu patch v0.2.1 loaded");
+    trace("menu patch v0.2.2 loaded");
 })();

@@ -2,7 +2,7 @@
 
 在单人战斗的暂停菜单中增加“重置空间”按钮，参考多人模式的原地重置方式重新创建当前房间，从已有模型重新初始化角色。
 
-当前版本：**v0.2.1（支持游戏更新后重新安装，待实机验证）**。适配 Windows Steam 版 **1.1.2.147157 / 1.1.2.147368**，Unity **2022.3.62f2**。
+当前版本：**v0.2.2**。适配 Windows Steam 版 **1.1.2.147157 / 1.1.2.147368**，Unity **2022.3.62f2**。
 
 ## 功能
 
@@ -154,20 +154,22 @@ v0.1.6 移除 `QuitAsync → ManualSave → ResetDataBinding → ForceReloadGame
 
 ## 验证情况
 
-- 23 项合成回归测试覆盖原地重置、血量/MP/药瓶/复活消耗隔离、开关与持久化、普通/精英抽图、Boss/多人排除、候选不足、预加载失败、地图回滚和存档竞态。
+- 27 项合成回归测试覆盖原地重置、血量/MP/药瓶/复活消耗隔离、开关与持久化、普通/精英抽图、Boss 场景切换与预加载失败、暂停恢复、多人排除、候选不足、地图回滚和存档竞态。
 - 本机原版脚本交叉检查执行 `breedSelfPlayerLoad`、`enterWithAutoCheckBattleState` 和 `BattleProcess_EnterStage`，连续重置三次；原版 `BattlePreloader` 的阶段预加载/收尾与后续房间预加载验证通过。其 Unity 原生对象由模拟宿主提供，未随仓库分发提取脚本。
 - 本机另执行原版 `randomStageIdx` 与 `PseudoRandomGenerator`，检查标签/历史地图排除、候选耗尽及连续八次随机重置，角色数据和已保存种子保持不变；场景和原生对象仍由模拟宿主提供。
 - 安装器的 17 项测试通过，包含更新基线迁移、旧状态归档、旧构建隔离、未知修改拒绝、迁移失败回滚、写入权限预检以及卸载保留新版 manifest；JavaScript 语法检查、两处 TextAsset 二进制往返、原始资源前缀一致性、仅两条 manifest 偏移变更和安装哈希检查通过。
 - 游戏 1.1.2.147368 的两处注入脚本及 19 个相关脚本与上版内容一致，已对新版脚本执行本地模拟交叉检查。
-- **v0.2.1 尚未完成实机回归。** 设置行的实际显示、随机地图资源、特殊 Boss 入场、所有角色的召唤物/持续效果、攻击/跳跃/闪避、后续关卡资源和长时间游玩仍需实机检查。没有实机性能数字。
+- **v0.2.2 的 Boss 战中途重置已通过实机测试。** 设置行的实际显示、随机地图资源、特殊 Boss 入场、所有角色的召唤物/持续效果、攻击/跳跃/闪避、后续关卡资源和长时间游玩仍需实机检查。没有实机性能数字。
 
 日志中的 `complete` 表示程序就绪检查通过，不代表所有按键和资源均经过人工验证。旧版 v0.1.3/v0.1.5 的实机日志对应完整重载，不能作为本版原地重置的运行证据。
 
 ## 日志与问题定位
 
-日志位于 `.single-space-local/runtime.log`。当前诊断标记为 `"version":"0.2.1"`；旧版日志中的 `"version":3` 对应 v0.1.3。
+日志位于 `.single-space-local/runtime.log`。当前诊断标记为 `"version":"0.2.2"`；旧版日志中的 `"version":3` 对应 v0.1.3。
 
 正常阶段依次为 `begin`、`room-rebuilt`、`complete`；发生地图变更时另记录 `room-rerolled` 的原图与新图。`complete.elapsedMs` 记录本次总耗时；若 30 秒内未满足入场就绪条件，会记录 `entry-timeout` 和错误信息。
+
+若准备阶段因状态变化中止，会记录 `preparation-aborted` 及变化项，例如 `bossStable`、`sameRoom` 或 `playerAlive`。
 
 当前版本不记录角色血量。旧日志中的 `health-checkpoint`、`health-restored`、`health-error` 属于 v0.1.4，升级后不再生成。
 
@@ -219,6 +221,8 @@ node --test .interface-analysis\tests\test_inplace_reset.cjs .interface-analysis
 在独立仓库根目录运行时，使用 `python -B -m unittest discover -s tests -v` 和 `node --test tests/test_inplace_reset.cjs tests/test_settings.cjs`。这些测试使用合成数据，不分发或读取游戏源文件。
 
 ## 版本记录
+
+**v0.2.2**：增加准备阶段的具体失败校验项日志。恢复关闭暂停菜单后记录恢复速度、再临时冻结房间重建的原有顺序。区分 Boss 战中切换的运行场景与存档入场地图：校验同一存档房间，预加载并重建存档入场地图，不把中途场景写入存档；普通房间仍拒绝地图不一致。Boss 战中途重置已通过实机测试。
 
 **v0.2.1**（原 v0.1.8）：支持游戏 1.1.2.147368；增加严格校验的 `rebase` 游戏更新迁移，保留新版资源映射并归档旧安装状态，防止旧版还原文件覆盖新版。重置玩法逻辑沿用 v0.2.0。
 
